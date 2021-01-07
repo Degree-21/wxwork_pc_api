@@ -36,13 +36,45 @@ class EchoBot(wxwork.CallbackHandler):
         message_class.client_id = client_id
         message_class.message_type = message_type
         message_class.message_data = message_data
-        rabbitmq.push_we_work_message(message_class)
-        print("===结束==")
-        # 如果是文本消息，就回复一条消息
-        if message_type == MessageType.MT_RECV_TEXT_MSG:
-            reply_content = u'😂😂😂你发过来的消息是：{0}'.format(message_data['content'])
-            time.sleep(2)
-            wxwork_manager.send_text(client_id, message_data['conversation_id'], reply_content)
+        mq = rabbitmq.RabbitMq(rabbitmq.MqBase())
+        mq.push_we_work_message(message_class)
+        print("推入消息队列完成")
+
+        # print("===结束==")
+        # # 如果是文本消息，就回复一条消息
+        # if message_type == MessageType.MT_RECV_TEXT_MSG:
+        #     reply_content = u'😂😂😂你发过来的消息是：{0}'.format(message_data['content'])
+        #     time.sleep(2)
+        #     wxwork_manager.send_text(client_id, message_data['conversation_id'], reply_content)
+
+    def on_mq_push_message(self):
+        exchange = rabbitmq.MqBase()
+        exchange.exchange_name = "wx_work_push_exchange"
+        exchange.queue_name = "wx_word_push_message"
+        exchange.routing_key = "wx_word_push_message"
+        exchange.exchange_type = "direct"
+        mq = rabbitmq.RabbitMq(exchange)
+        mq.consume_message(self.call_back_)
+
+    def call_back_(self, ch, method, properties, body):
+        try:
+            info = json.loads(str(body, 'utf-8'))
+            print(info)
+            data_model = rabbitmq.PushWeWorkMessage()
+            data_model.client_id = info["client_id"]
+            data_model.conversation_id = info["conversation_id"]
+            data_model.content = info["content"]
+            data_model.message_type = info["message_type"]
+            data_model.row = info["row"]
+            if data_model.message_type == MessageType.MT_RECV_TEXT_MSG:
+                reply_content = u'😂😂😂你发过来的消息是：{0}'.format(data_model.content)
+                # time.sleep(2)
+                print(reply_content)
+                res = wxwork_manager.send_text(data_model.client_id, data_model.conversation_id, data_model.content)
+                print(res)
+
+        except Exception as e:
+            print(e)
 
 
 if __name__ == "__main__":
@@ -51,7 +83,9 @@ if __name__ == "__main__":
     # 添加回调实例对象
     wxwork_manager.add_callback_handler(echoBot)
     wxwork_manager.manager_wxwork(smart=True)
+    echoBot.on_mq_push_message()
 
+    # todo 改为多进程收发
     # 阻塞主线程
     while True:
         time.sleep(0.5)
